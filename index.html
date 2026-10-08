@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Universal AI Chat Interface</title>
+    <title>Free AI Chat</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -68,7 +68,7 @@
     <div id="loading">
         <div class="flex items-center space-x-3">
             <i class="fa-solid fa-spinner fa-spin text-blue-500 text-2xl"></i>
-            <span>Initializing Gemini Client...</span>
+            <span>Initializing AI...</span>
         </div>
     </div>
 
@@ -124,7 +124,7 @@
                     </button>
                     <div class="flex items-center gap-2">
                         <span class="font-semibold text-lg tracking-tight bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">Gemini</span>
-                        <span id="currentModelBadge" class="text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-zinc-700 truncate max-w-[150px] sm:max-w-xs">deepseek/deepseek-r1:free</span>
+                        <span id="currentModelBadge" class="text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-zinc-700 truncate max-w-[150px] sm:max-w-xs">openrouter/free</span>
                     </div>
                 </div>
                 <div class="flex items-center gap-2">
@@ -163,6 +163,10 @@
                     <div class="relative bg-gray-100 dark:bg-zinc-800/80 rounded-2xl border border-gemini-border dark:border-gemini-borderDark focus-within:border-blue-500 dark:focus-within:border-blue-500 transition-all shadow-sm">
                         <textarea id="userInput" rows="1" placeholder="Enter a prompt here..." class="w-full bg-transparent px-4 py-3.5 pr-12 text-sm focus:outline-none resize-none max-h-40 text-gray-800 dark:text-gray-100 placeholder-gray-400"></textarea>
                         <div class="absolute right-2 bottom-2 flex items-center gap-1">
+                             <input id="imageInput" type="file" accept="image/*" class="hidden">
+                             <button id="attachImageBtn" title="Attach image" class="w-9 h-9 rounded-xl hover:bg-gray-200 dark:hover:bg-zinc-700 text-gray-500 dark:text-gray-300 flex items-center justify-center">
+                                 <i class="fa-solid fa-image text-sm"></i>
+                             </button>
                             <button id="sendBtn" class="w-9 h-9 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:hover:bg-blue-600 text-white flex items-center justify-center transition-colors shadow-sm">
                                 <i class="fa-solid fa-arrow-up text-sm"></i>
                             </button>
@@ -196,8 +200,8 @@
                 </div>
                 <div>
                     <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Model Name</label>
-                    <input type="text" id="modelInput" placeholder="deepseek/deepseek-r1:free" class="w-full px-3 py-2 text-sm rounded-lg border border-gemini-border dark:border-gemini-borderDark bg-transparent focus:outline-none focus:border-blue-500">
-                    <p class="text-[10px] text-gray-400 mt-1">Examples: deepseek/deepseek-r1:free, google/gemini-2.0-flash-exp:free, meta-llama/llama-3-8b-instruct:free</p>
+                    <input type="text" id="modelInput" placeholder="openrouter/free" class="w-full px-3 py-2 text-sm rounded-lg border border-gemini-border dark:border-gemini-borderDark bg-transparent focus:outline-none focus:border-blue-500">
+                    <p class="text-[10px] text-gray-400 mt-1">Examples: openrouter/free, google/gemini-2.0-flash-exp:free, meta-llama/llama-3-8b-instruct:free</p>
                 </div>
             </div>
             <div class="mt-6 flex justify-end gap-2">
@@ -248,12 +252,13 @@
         // State Management
         let state = {
             apiKey: localStorage.getItem('gemini_api_key') || '',
-            model: localStorage.getItem('gemini_model') || 'deepseek/deepseek-r1:free',
+            model: localStorage.getItem('gemini_model') || 'openrouter/free',
             darkMode: localStorage.getItem('gemini_dark_mode') === 'true',
             chats: JSON.parse(localStorage.getItem('gemini_chats')) || [],
             currentChatId: localStorage.getItem('gemini_current_chat_id') || null,
             isGenerating: false,
-            renameTargetId: null
+            renameTargetId: null,
+             pendingImage: null
         };
 
         // DOM Elements
@@ -272,6 +277,12 @@
         const chatScrollArea = document.getElementById('chatScrollArea');
         const userInput = document.getElementById('userInput');
         const sendBtn = document.getElementById('sendBtn');
+         const imageInput = document.getElementById('imageInput');
+         const attachImageBtn = document.getElementById('attachImageBtn');
+         const imagePreview = document.getElementById('imagePreview');
+         const imagePreviewImg = document.getElementById('imagePreviewImg');
+         const imageName = document.getElementById('imageName');
+         const removeImageBtn = document.getElementById('removeImageBtn');
         const currentModelBadge = document.getElementById('currentModelBadge');
         const clearChatBtn = document.getElementById('clearChatBtn');
         
@@ -513,60 +524,74 @@
         // API Interaction & Streaming
         async function handleSendMessage() {
             const text = userInput.value.trim();
-            if (!text || state.isGenerating) return;
+            if ((!text && !state.pendingImage) || state.isGenerating) return;
 
             const chat = getCurrentChat();
             if (!chat) return;
 
-            // Clear input and auto-resize reset
+            const pendingImage = state.pendingImage;
+            state.pendingImage = null;
+            imageInput.value = '';
+            hideImagePreview();
+
             userInput.value = '';
             userInput.style.height = 'auto';
 
-            // Add user message
-            chat.messages.push({ role: 'user', content: text });
-            
-            // Auto-generate title if first message
+            const historyContent = pendingImage
+                ? `${text || 'Please analyze this image.'}\n[Image attached: ${pendingImage.name}]`
+                : text;
+
+            chat.messages.push({ role: 'user', content: historyContent });
+
             if (chat.messages.length === 1) {
-                chat.title = text.length > 25 ? text.substring(0, 25) + '...' : text;
+                chat.title = text
+                    ? (text.length > 25 ? text.substring(0, 25) + '...' : text)
+                    : 'Image Analysis';
             }
 
             saveState();
             renderChatHistory();
             renderCurrentMessages();
 
-            // Prepare AI message placeholder
             state.isGenerating = true;
             sendBtn.disabled = true;
 
             chat.messages.push({ role: 'assistant', content: '' });
             const aiMessageIndex = chat.messages.length - 1;
-            
             renderCurrentMessages();
 
-            // Prepare payload
             const messagesPayload = [];
             if (chat.systemPrompt) {
                 messagesPayload.push({ role: 'system', content: chat.systemPrompt });
             }
-            chat.messages.slice(0, -1).forEach(m => {
-                messagesPayload.push({ role: m.role, content: m.content });
+
+            chat.messages.slice(0, -1).forEach((m, index, arr) => {
+                if (pendingImage && m.role === 'user' && index === arr.length - 1) {
+                    messagesPayload.push({
+                        role: 'user',
+                        content: [
+                            { type: 'text', text: text || 'Please analyze this image.' },
+                            { type: 'image_url', image_url: { url: pendingImage.dataUrl } }
+                        ]
+                    });
+                } else {
+                    messagesPayload.push({ role: m.role, content: m.content });
+                }
             });
 
             try {
-                const headers = {
-                    'Content-Type': 'application/json',
-                    'HTTP-Referer': window.location.origin,
-                    'X-Title': 'Universal AI Chat Interface'
-                };
-                if (state.apiKey) {
-                    headers['Authorization'] = `Bearer ${state.apiKey}`;
-                }
+                if (!state.apiKey) throw new Error('Add your OpenRouter API key in Settings first.');
 
                 const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
                     method: 'POST',
-                    headers: headers,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${state.apiKey}`,
+                        'HTTP-Referer': window.location.origin,
+                        'X-Title': 'Free AI Chat'
+                    },
                     body: JSON.stringify({
-                        model: state.model,
+                        model: state.model || 'openrouter/free',
                         messages: messagesPayload,
                         stream: true
                     })
@@ -588,7 +613,7 @@
 
                     buffer += decoder.decode(value, { stream: true });
                     const lines = buffer.split('\n');
-                    buffer = lines.pop(); // Keep incomplete line in buffer
+                    buffer = lines.pop();
 
                     for (const line of lines) {
                         const trimmed = line.trim();
@@ -602,18 +627,13 @@
                             if (token) {
                                 accumulatedText += token;
                                 chat.messages[aiMessageIndex].content = accumulatedText;
-                                
-                                // Live update current message element without full re-render for speed
                                 updateLastAssistantMessage(accumulatedText);
                             }
-                        } catch (e) {
-                            // Silent catch for parse chunks error
-                        }
+                        } catch (_) {}
                     }
                 }
             } catch (error) {
-                console.error("API Error:", error);
-                chat.messages[aiMessageIndex].content = `⚠️ **Error:** ${error.message || 'Failed to fetch response from OpenRouter.'}`;
+                chat.messages[aiMessageIndex].content = `⚠️ **Error:** ${error.message || 'Request failed.'}`;
                 renderCurrentMessages();
             } finally {
                 state.isGenerating = false;
@@ -621,6 +641,24 @@
                 saveState();
                 renderCurrentMessages();
             }
+        }
+
+        function showImagePreview(file) {
+            const reader = new FileReader();
+            reader.onload = () => {
+                state.pendingImage = { name: file.name, dataUrl: reader.result };
+                imagePreviewImg.src = reader.result;
+                imageName.textContent = file.name;
+                imagePreview.classList.remove('hidden');
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function hideImagePreview() {
+            state.pendingImage = null;
+            imagePreview.classList.add('hidden');
+            imagePreviewImg.removeAttribute('src');
+            imageName.textContent = '';
         }
 
         function updateLastAssistantMessage(text) {
@@ -661,6 +699,24 @@
 
             sendBtn.onclick = handleSendMessage;
 
+             attachImageBtn.onclick = () => imageInput.click();
+             imageInput.onchange = () => {
+                 const file = imageInput.files?.[0];
+                 if (!file) return;
+                 if (!file.type.startsWith('image/')) {
+                     alert('Please select an image file.');
+                     imageInput.value = '';
+                     return;
+                 }
+                 if (file.size > 6 * 1024 * 1024) {
+                     alert('Please choose an image smaller than 6 MB.');
+                     imageInput.value = '';
+                     return;
+                 }
+                 showImagePreview(file);
+             };
+             removeImageBtn.onclick = hideImagePreview;
+
             // Clear Chat
             clearChatBtn.onclick = () => {
                 const chat = getCurrentChat();
@@ -685,7 +741,7 @@
             closeSettings.onclick = () => settingsModal.classList.add('hidden');
             saveSettings.onclick = () => {
                 state.apiKey = apiKeyInput.value.trim();
-                state.model = modelInput.value.trim() || 'deepseek/deepseek-r1:free';
+                state.model = modelInput.value.trim() || 'openrouter/free';
                 currentModelBadge.textContent = state.model;
                 saveState();
                 settingsModal.classList.add('hidden');
